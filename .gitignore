@@ -1,0 +1,16 @@
+# Dependências
+node_modules/
+
+# Arquivos de ambiente e credenciais
+.env
+credentials.json
+service-account-key.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Arquivos temporários
+.DS_Store
+.cache
