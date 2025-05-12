@@ -9,7 +9,20 @@ const CONFIG = {
   slack: {
     botToken: process.env.SLACK_BOT_TOKEN,
     channelId: process.env.CHANNEL_ID,
-    gestorNome: 'Erick'
+    // Mapeamento de gestores para seus respectivos negócios
+    gestores: [
+      {
+        userId: 'UKJNGM8DR', // ID da primeira gestora
+        nome: 'Erick',
+        negocio: 'CX Consumer'
+      },
+      {
+        userId: 'U07JRJHUVG8', // ID da segunda gestora
+        nome: 'Gestora DX', // Substitua pelo nome correto
+        negocio: 'DX'
+      }
+      // Adicione mais gestores conforme necessário
+    ]
   },
   googleSheets: {
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
@@ -77,14 +90,24 @@ async function readSheetData() {
   }
 }
 
-// Processar os dados para o diagnóstico
-function processData(data) {
+// Processar os dados para o diagnóstico de um negócio específico
+function processData(data, filtroNegocio = null) {
   try {
-    console.log('Processando dados para diagnóstico...');
+    console.log(`Processando dados para diagnóstico${filtroNegocio ? ' do negócio: ' + filtroNegocio : ''}...`);
+    
+    // Filtrar dados por negócio, se especificado
+    const dadosFiltrados = filtroNegocio 
+      ? data.filter(row => row.negocio === filtroNegocio)
+      : data;
+    
+    if (filtroNegocio && dadosFiltrados.length === 0) {
+      console.log(`Nenhum dado encontrado para o negócio: ${filtroNegocio}`);
+      return null;
+    }
     
     // Agrupar por negócio
     const negocios = {};
-    data.forEach(row => {
+    dadosFiltrados.forEach(row => {
       const negocio = row.negocio || 'Não especificado';
       if (!negocios[negocio]) {
         negocios[negocio] = [];
@@ -94,7 +117,7 @@ function processData(data) {
     
     // Agrupar por campanha
     const campanhas = {};
-    data.forEach(row => {
+    dadosFiltrados.forEach(row => {
       const campanha = row.campanha || 'Não especificada';
       if (!campanhas[campanha]) {
         campanhas[campanha] = [];
@@ -112,7 +135,7 @@ function processData(data) {
     };
     
     // Contar analistas por quadrante
-    data.forEach(row => {
+    dadosFiltrados.forEach(row => {
       if (row.quadrante && quadrantes[row.quadrante] !== undefined) {
         quadrantes[row.quadrante]++;
       } else {
@@ -128,7 +151,7 @@ function processData(data) {
     let semMonitoria = 0;
     let semCSAT = 0;
     
-    data.forEach(row => {
+    dadosFiltrados.forEach(row => {
       // Converter os valores de string para números
       const percCsat = percentToNumber(row.perc_csat);
       const percAderencia = percentToNumber(row.perc_aderencia);
@@ -236,12 +259,13 @@ function processData(data) {
       metricasPorCampanha,
       mediaCsatGeral: mediaCsatGeral.toFixed(1),
       mediaAderenciaGeral: mediaAderenciaGeral.toFixed(1),
-      totalAnalistas: data.length,
+      totalAnalistas: dadosFiltrados.length,
       quadrantes,
       campanhasQ3,
       campanhasQ4,
       semMonitoria,
-      semCSAT
+      semCSAT,
+      negocioAtual: filtroNegocio || 'Todos'
     };
   } catch (error) {
     console.error('Erro ao processar dados:', error.message);
@@ -250,7 +274,7 @@ function processData(data) {
 }
 
 // Gerar texto do diagnóstico
-function gerarTextoDiagnostico(resultados) {
+function gerarTextoDiagnostico(resultados, nomeGestor) {
   const dataAtual = new Date();
   const dataCorte = `${dataAtual.getDate().toString().padStart(2, '0')}/${(dataAtual.getMonth() + 1).toString().padStart(2, '0')}/${dataAtual.getFullYear()}`;
   
@@ -259,14 +283,14 @@ function gerarTextoDiagnostico(resultados) {
   const percQ1Q2 = Math.round((totalQ1Q2 / resultados.totalAnalistas) * 100);
   
   // Texto do diagnóstico
-  return `Olá ${CONFIG.slack.gestorNome},
+  let texto = `Olá ${nomeGestor},
 
-*PAINEL ESTRATÉGICO - ELOS* :megaphone:
+*PAINEL ESTRATÉGICO - ELOS (${resultados.negocioAtual})* 📢
 
 :rolled_up_newspaper: *RECADOS IMPORTANTES:*
 Devido a ausência de metas de CSAT a nível de células, estamos utilizando as metas do mês anterior.
 
-Com a data de corte em ${dataCorte}, temos a seguinte visão geral:
+Com a data de corte em ${dataCorte}, temos a seguinte visão geral para *${resultados.negocioAtual}*:
 
 *Distribuição dos analistas nos quadrantes:*
 • Q1: ${resultados.quadrantes.Q1} analistas
@@ -279,18 +303,26 @@ Neste recorte, temos um total de ${resultados.totalAnalistas} analistas distribu
 
 :chart_with_upwards_trend: O total de analistas nos quadrantes Q1 e Q2 é de ${percQ1Q2}%. ${percQ1Q2 >= 30 ? ':white_check_mark:' : ''}
 
-:dart: A aderência geral está em ${resultados.mediaAderenciaGeral}%, com um CSAT médio de ${resultados.mediaCsatGeral}%.
+:dart: A aderência geral está em ${resultados.mediaAderenciaGeral}%, com um CSAT médio de ${resultados.mediaCsatGeral}%.`;
 
-Abaixo, temos as frentes ofensoras nos quadrantes que não performam CSAT e/ou Aderência.
+  // Adicionar campanhas ofensoras se houver
+  if (resultados.campanhasQ3.length > 0) {
+    texto += `\n\n:warning: *Frentes Ofensoras - % de Analistas (Q3)* :warning:
+${resultados.campanhasQ3.slice(0, 3).map(c => `${c.campanha} - ${c.total} analistas (${c.percQ3}%)`).join('\n')}`;
+  }
+  
+  if (resultados.campanhasQ4.length > 0) {
+    texto += `\n\n:warning: *Frentes Ofensoras - % de Analistas (Q4)* :warning:
+${resultados.campanhasQ4.slice(0, 3).map(c => `${c.campanha} - ${c.total} analistas (${c.percQ4}%)`).join('\n')}`;
+  }
 
-:warning: *Frentes Ofensoras - % de Analistas (Q3)* :warning:
-${resultados.campanhasQ3.slice(0, 3).map(c => `${c.campanha} - ${c.total} analistas (${c.percQ3}%)`).join('\n')}
-
-:warning: *Frentes Ofensoras - % de Analistas (Q4)* :warning:
-${resultados.campanhasQ4.slice(0, 3).map(c => `${c.campanha} - ${c.total} analistas (${c.percQ4}%)`).join('\n')}
-
-*Principais negócios avaliados:*
-${resultados.metricasPorNegocio.slice(0, 3).map(n => `${n.negocio}: ${n.avaliados} avaliados de ${n.total} analistas`).join('\n')}`;
+  // Adicionar principais campanhas se houver
+  if (resultados.metricasPorCampanha.length > 0) {
+    texto += `\n\n*Campanhas de ${resultados.negocioAtual}:*
+${resultados.metricasPorCampanha.slice(0, 5).map(c => `${c.campanha}: ${c.total} analistas (CSAT: ${c.mediaCsat}%, Aderência: ${c.mediaAderencia}%)`).join('\n')}`;
+  }
+  
+  return texto;
 }
 
 // Enviar diagnóstico estratégico para o Slack
@@ -301,77 +333,89 @@ async function enviarDiagnostico() {
     // Ler dados da planilha
     const dadosPlanilha = await readSheetData();
     
-    // Processar dados
-    const resultados = processData(dadosPlanilha);
-    
-    // Gerar texto do diagnóstico
-    const textoDiagnostico = gerarTextoDiagnostico(resultados);
-    
-    console.log('Diagnóstico gerado, enviando para o Slack...');
-    
-    // Blocos do Slack
-    const blocks = [
-      {
-        type: 'header',
-        text: {
-          type: 'plain_text',
-          text: '📊 Diagnóstico Estratégico - ELOS',
-          emoji: true
-        }
-      },
-      {
-        type: 'image',
-        title: {
-          type: 'plain_text',
-          text: 'Análise de Performance'
-        },
-        image_url: CONFIG.imagem.url,
-        alt_text: 'Capa do Diagnóstico'
-      },
-      {
-        type: 'divider',
-      },
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: textoDiagnostico
-        }
-      },
-      {
-        type: 'context',
-        elements: [
-          {
-            type: 'mrkdwn',
-            text: `*Resumo:* CSAT Médio: ${resultados.mediaCsatGeral}% | Aderência Média: ${resultados.mediaAderenciaGeral}% | Total Analistas: ${resultados.totalAnalistas}`
+    // Para cada gestor, processar e enviar seu relatório específico
+    for (const gestor of CONFIG.slack.gestores) {
+      console.log(`Processando diagnóstico para o gestor ${gestor.nome} (${gestor.negocio})...`);
+      
+      // Processar dados específicos para o negócio deste gestor
+      const resultados = processData(dadosPlanilha, gestor.negocio);
+      
+      // Se não houver dados para este negócio, pular para o próximo gestor
+      if (!resultados) {
+        console.log(`Sem dados para o negócio ${gestor.negocio}, pulando gestor ${gestor.nome}`);
+        continue;
+      }
+      
+      // Gerar texto do diagnóstico
+      const textoDiagnostico = gerarTextoDiagnostico(resultados, gestor.nome);
+      
+      console.log(`Diagnóstico gerado para ${gestor.nome}, enviando para o Slack...`);
+      
+      // Blocos do Slack
+      const blocks = [
+        {
+          type: 'header',
+          text: {
+            type: 'plain_text',
+            text: `📊 Diagnóstico Estratégico - ${gestor.negocio}`,
+            emoji: true
           }
-        ]
-      }
-    ];
-
-    console.log('Enviando mensagem para o Slack...');
-
-    const response = await axios.post(
-      'https://slack.com/api/chat.postMessage',
-      {
-        channel: CONFIG.slack.channelId,
-        text: `Diagnóstico Estratégico - ELOS - ${new Date().toLocaleDateString()}`,
-        blocks: blocks,
-        unfurl_links: false,
-        unfurl_media: true,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${CONFIG.slack.botToken}`,
-          'Content-Type': 'application/json',
         },
+        {
+          type: 'image',
+          title: {
+            type: 'plain_text',
+            text: 'Análise de Performance'
+          },
+          image_url: CONFIG.imagem.url,
+          alt_text: 'Capa do Diagnóstico'
+        },
+        {
+          type: 'divider',
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: textoDiagnostico
+          }
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: `*Resumo ${gestor.negocio}:* CSAT Médio: ${resultados.mediaCsatGeral}% | Aderência Média: ${resultados.mediaAderenciaGeral}% | Total Analistas: ${resultados.totalAnalistas}`
+            }
+          ]
+        }
+      ];
+  
+      console.log(`Enviando mensagem direta para ${gestor.nome}...`);
+  
+      // Enviar para o ID do usuário específico deste gestor
+      const response = await axios.post(
+        'https://slack.com/api/chat.postMessage',
+        {
+          channel: gestor.userId,
+          text: `Diagnóstico Estratégico - ${gestor.negocio} - ${new Date().toLocaleDateString()}`,
+          blocks: blocks,
+          unfurl_links: false,
+          unfurl_media: true,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${CONFIG.slack.botToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+  
+      if (!response.data.ok) {
+        console.error(`Erro da API Slack para ${gestor.nome}:`, response.data.error);
+      } else {
+        console.log(`Diagnóstico enviado ao Slack com sucesso para ${gestor.nome}!`);
       }
-    );
-
-    if (!response.data.ok) {
-      console.error('Erro da API Slack:', response.data.error);
-    } else {
-      console.log('Diagnóstico enviado ao Slack com sucesso!');
     }
     
   } catch (error) {
