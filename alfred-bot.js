@@ -9,19 +9,12 @@ const CONFIG = {
   slack: {
     botToken: process.env.SLACK_BOT_TOKEN,
     channelId: process.env.CHANNEL_ID,
-    // Mapeamento de gestores para seus respectivos negócios
+    // Agora só precisamos do ID, o nome será buscado automaticamente
     gestores: [
       {
-        userId: 'UKJNGM8DR', // ID da primeira gestora
-        nome: 'Erick',
+        userId: 'UKJNGM8DR', // ID do usuário que receberá mensagens
         negocio: 'CX Consumer'
-      },
-      {
-        userId: 'U07JRJHUVG8', // ID da segunda gestora
-        nome: 'Gestora DX', // Substitua pelo nome correto
-        negocio: 'DX'
       }
-      // Adicione mais gestores conforme necessário
     ]
   },
   googleSheets: {
@@ -32,6 +25,38 @@ const CONFIG = {
     url: 'https://i.postimg.cc/rFD1KRC4/Capa-Colmeia-4.png'
   }
 };
+
+// Nova função para buscar informações do usuário no Slack
+async function obterInformacoesUsuario(userId) {
+  try {
+    console.log(`Buscando informações do usuário ${userId}...`);
+    
+    const response = await axios.get(
+      `https://slack.com/api/users.info?user=${userId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${CONFIG.slack.botToken}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        }
+      }
+    );
+
+    if (!response.data.ok) {
+      throw new Error(`Erro ao buscar informações do usuário: ${response.data.error}`);
+    }
+    
+    // Extrair o nome do usuário - podemos usar display_name ou real_name
+    const usuario = response.data.user;
+    const nome = usuario.profile.display_name || usuario.profile.real_name || usuario.name || 'Gestor';
+    
+    console.log(`Nome do usuário ${userId} obtido: ${nome}`);
+    return nome;
+  } catch (error) {
+    console.error(`Erro ao buscar informações do usuário ${userId}:`, error.message);
+    // Retornar um nome genérico em caso de erro
+    return 'Gestor';
+  }
+}
 
 // Inicializar a API do Google Sheets
 async function initializeGoogleSheets() {
@@ -335,21 +360,24 @@ async function enviarDiagnostico() {
     
     // Para cada gestor, processar e enviar seu relatório específico
     for (const gestor of CONFIG.slack.gestores) {
-      console.log(`Processando diagnóstico para o gestor ${gestor.nome} (${gestor.negocio})...`);
+      console.log(`Processando diagnóstico para o gestor com ID ${gestor.userId}...`);
+      
+      // Buscar o nome real do usuário no Slack
+      const nomeGestor = await obterInformacoesUsuario(gestor.userId);
       
       // Processar dados específicos para o negócio deste gestor
       const resultados = processData(dadosPlanilha, gestor.negocio);
       
       // Se não houver dados para este negócio, pular para o próximo gestor
       if (!resultados) {
-        console.log(`Sem dados para o negócio ${gestor.negocio}, pulando gestor ${gestor.nome}`);
+        console.log(`Sem dados para o negócio ${gestor.negocio}, pulando gestor ${nomeGestor}`);
         continue;
       }
       
-      // Gerar texto do diagnóstico
-      const textoDiagnostico = gerarTextoDiagnostico(resultados, gestor.nome);
+      // Gerar texto do diagnóstico com o nome real obtido do Slack
+      const textoDiagnostico = gerarTextoDiagnostico(resultados, nomeGestor);
       
-      console.log(`Diagnóstico gerado para ${gestor.nome}, enviando para o Slack...`);
+      console.log(`Diagnóstico gerado para ${nomeGestor}, enviando para o Slack...`);
       
       // Blocos do Slack
       const blocks = [
@@ -391,7 +419,7 @@ async function enviarDiagnostico() {
         }
       ];
   
-      console.log(`Enviando mensagem direta para ${gestor.nome}...`);
+      console.log(`Enviando mensagem direta para ${nomeGestor}...`);
   
       // Enviar para o ID do usuário específico deste gestor
       const response = await axios.post(
@@ -412,9 +440,9 @@ async function enviarDiagnostico() {
       );
   
       if (!response.data.ok) {
-        console.error(`Erro da API Slack para ${gestor.nome}:`, response.data.error);
+        console.error(`Erro da API Slack para ${nomeGestor}:`, response.data.error);
       } else {
-        console.log(`Diagnóstico enviado ao Slack com sucesso para ${gestor.nome}!`);
+        console.log(`Diagnóstico enviado ao Slack com sucesso para ${nomeGestor}!`);
       }
     }
     
